@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+.venv/
+venv/
+
+# Data & results (usually large)
+dataset/
+distill_results/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local virtual env folder
+triplet/
