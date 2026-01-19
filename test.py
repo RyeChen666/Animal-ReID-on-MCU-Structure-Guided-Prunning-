@@ -1,17 +1,17 @@
 import os
 SEED = 0
 
-# 1) env vars BEFORE importing tensorflow
+# env vars BEFORE importing tensorflow
 os.environ["PYTHONHASHSEED"] = str(SEED)
 os.environ["TF_DETERMINISTIC_OPS"] = "1"
 
-# 2) python / numpy seeds
+# python / numpy seeds
 import random
 import numpy as np
 random.seed(SEED)
 np.random.seed(SEED)
 
-# 3) now import tensorflow and set tf/keras seed
+# import tensorflow and set tf/keras seed
 import tensorflow as tf
 tf.keras.utils.set_random_seed(SEED)
 try:
@@ -37,64 +37,27 @@ from pathlib import Path
 from absl import logging
 import json
 
-
-
-def augmentation_layer(
-    x: tf.Tensor,
-    augmentation_count: int = 4,
-    augmentation_factor: float = 0.1,
-    seed: int = 0,
-):
-    if augmentation_count == 0 or augmentation_factor < 1e-6:
-        return x
-
-    t_opts = dict(seed=seed)
-    transformations = [
-        tf.keras.layers.Dropout(augmentation_factor, **t_opts),
-        tf.keras.layers.GaussianNoise(augmentation_factor, **t_opts),
-        tf.keras.layers.RandomFlip("horizontal", **t_opts),
-        tf.keras.layers.RandomTranslation(augmentation_factor, augmentation_factor, fill_mode="constant", **t_opts),
-        tf.keras.layers.RandomRotation(augmentation_factor, fill_mode="constant", **t_opts),
-        tf.keras.layers.RandomZoom(augmentation_factor, augmentation_factor, fill_mode="constant", **t_opts),
-        keras_cv.layers.RandomHue(augmentation_factor, [0, 255], **t_opts),
-        keras_cv.layers.RandomSaturation(augmentation_factor, **t_opts),
-    ]
-
-    # --- 关键修改：用“局部 RNG”固定选择 ---
-    import numpy as np
-    rng = np.random.RandomState(seed)  # 只受传入 seed 影响
-    idx = rng.choice(len(transformations),
-                     size=min(augmentation_count, len(transformations)),
-                     replace=False)
-    for i in idx:
-        x = transformations[i](x)
-
-    return x
-
-
 # Student Model
 def build_student_model(embedding_size=128, input_shape=(64, 64, 3), dropout_rate=0.1, augmentation_count=4, augmentation_factor=0.1, seed=0):
     inputs = tf.keras.Input(shape=input_shape, dtype=tf.float32)
-    # x = augmentation_layer(inputs, augmentation_count=augmentation_count, augmentation_factor=augmentation_factor, seed=seed)
-    # x = tf.cast(inputs, tf.float32)
-    # x = tf.keras.applications.mobilenet_v2.preprocess_input(inputs)
     x = tf.keras.applications.mobilenet_v2.preprocess_input(inputs)
 
-    # base_model_full = tf.keras.applications.MobileNetV2(include_top=False, weights="imagenet", input_shape=input_shape, alpha=1.0)
-    base_model_full = tf.keras.applications.MobileNetV2(include_top=False, weights=None, input_shape=input_shape, alpha=0.25)
+    # Use Pre-trained weight (imagenet): [0.35, 0.5, 0.75, 1.0]
+    base_model_full = tf.keras.applications.MobileNetV2(include_top=False, weights="imagenet", input_shape=input_shape, alpha=1.0)
+    # base_model_full = tf.keras.applications.MobileNetV2(include_top=False, weights=None, input_shape=input_shape, alpha=0.35)
     base_model_full.summary()
     
 
-    # # 截断到第 71 层（保留前 72 层）
-    # truncated_output = base_model_full.layers[71].output
-    # truncated_model = tf.keras.Model(inputs=base_model_full.input, outputs=truncated_output)
+    # Truncate at the 71st layer (keeping the first 72 layers)
+    truncated_output = base_model_full.layers[71].output
+    truncated_model = tf.keras.Model(inputs=base_model_full.input, outputs=truncated_output)
 
-    # # 将截断模型应用于输入
-    # truncated_model.trainable = True
-    # x = truncated_model(x, training=True)
+    # Apply the truncated model to the input
+    truncated_model.trainable = True
+    x = truncated_model(x, training=True)
 
 
-    x = base_model_full(x, training=True)
+    # x = base_model_full(x, training=True)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     x = tf.keras.layers.Dropout(dropout_rate, seed=seed)(x)
     x = tf.keras.layers.Dense(embedding_size, activation=None)(x)
@@ -102,13 +65,13 @@ def build_student_model(embedding_size=128, input_shape=(64, 64, 3), dropout_rat
 
     model = tf.keras.Model(inputs=inputs, outputs=x, name="student_model")
 
-    # print(f"截断后的模型共 {len(truncated_model.layers)} 层")
-    print(f"原始模型共 {len(base_model_full.layers)} 层")
+    print(f"The truncated model has a total of {len(truncated_model.layers)} layers.")
+    print(f"The original model has a total of {len(base_model_full.layers)} llayers.")
     return model
 
 
-# Distillation Model
-class DistillModel(tf.keras.Model):
+# Train Section
+class TrainModel(tf.keras.Model):
     def __init__(self, student):
         super().__init__()
         self.student = student
@@ -148,10 +111,7 @@ def main():
     # dataset_path = "dataset/mpdd_sorted_by_id"
     # dataset_path = "dataset/friesiancattle2017_sorted_by_id"
     dataset_path = "dataset/lion_sorted_by_id"
-    # dataset_path = "dataset/Stoat_sorted_by_id"
     # dataset_path = "dataset/CoBRA"
-    # dataset_path = "dataset/PolarBear"
-    # dataset_path = "dataset/SeaStarReID2023"
     # dataset_path = "dataset/IPanda50"
     # dataset_path = "dataset/CornwallCattle"
     # dataset_path = "dataset/CornwallCattleNoBackground"
@@ -193,11 +153,11 @@ def main():
 
     top_k = (1, 5, 10)
 
-    results_dir = Path("distill_results")
+    results_dir = Path("results")
     results_dir.mkdir(exist_ok=True)
 
     student = build_student_model()
-    model = DistillModel(student)
+    model = TrainModel(student)
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4))
 
     callbacks = [
